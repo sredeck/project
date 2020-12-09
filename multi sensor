@@ -1,0 +1,169 @@
+#!usr/bin/python3
+
+import adafruit_dht
+import time
+import RPi.GPIO as GPIO
+import datetime
+import board
+import spidev
+
+
+relay_2ch = 17
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+GPIO.setup(relay_2ch, GPIO.OUT)
+
+LDR = 24
+MQ135 = 23
+FC28_MCP3008 = 5
+delay = 5
+
+# Open SPI bus
+spi = spidev.SpiDev()
+spi.open(0,0)
+
+dht = adafruit_dht.DHT22(board.D4, use_pulseio=False)
+
+#set_temp = 28
+set_humidity = 70
+
+f = open ('jurnal.csv', 'w')
+f.write('   Date:         Time:       Temp:      Humidity:    Light:   Gas:      Moisture:\r\n')
+
+def ReadChannel(FC28_MCP3008):
+  spi.max_speed_hz = 1000000
+  adc = spi.xfer2([1,(8+FC28_MCP3008)<<4,0])
+  data = ((adc[1]&3) << 8) + adc[2]
+  return data
+
+def ConvertPercent(data):
+  percent = int(round(data/10.24))
+  return percent
+
+def Gas(MQ135):
+      count = 0
+      #Output on the pin for 
+      GPIO.setup(MQ135, GPIO.OUT)
+      GPIO.output(MQ135, GPIO.LOW)
+      time.sleep(4)
+      #Change the pin back to input
+      GPIO.setup(MQ135, GPIO.IN)
+      #Count until the pin goes high
+      while (GPIO.input(MQ135) == GPIO.LOW):
+        count += 1
+      return count
+
+def Bright(LDR):
+      count_1 = 0
+      #Output on the pin for 
+      GPIO.setup(LDR, GPIO.OUT)
+      GPIO.output(LDR, GPIO.LOW)
+      time.sleep(5)
+      #Change the pin back to input
+      GPIO.setup(LDR, GPIO.IN)
+      #Count until the pin goes high
+      while (GPIO.input(LDR) == GPIO.LOW):
+        count_1 += 1
+      return count_1
+
+def BrightPercent(count_1):
+      percent_1 = int(round(count_1/float(1024)))
+      return percent_1
+
+
+while True:
+
+     try:
+        soil_lvl = ReadChannel(FC28_MCP3008)
+        soil_percent = ConvertPercent(soil_lvl)
+        gas = Gas(MQ135)
+        light = Bright(LDR)
+        temp_c = dht.temperature
+        humd = dht.humidity
+        if humd is not None and temp_c is not None:
+          f.write('{0}     {1}     {2:0.1f}*C      {3:0.1f}%RH     {4} Lux      {5} ppm      {6}({7}%)\r\n'.format(time.strftime('%d:%m:%Y'),time.strftime('%H:%M:%S'),temp_c, humd,light,gas,soil_lvl,soil_percent))
+          print ('------------------------------------')
+          print ('Moisture: {} ({}%)'.format(soil_lvl,soil_percent))
+          print ('CO2: {} ppm'.format(gas))
+          print ('Light: {} lux'.format(light))
+          print ('Temperature: {:.1f} *C'.format(temp_c))
+          print ('Humidity: {:.1f}% RH'.format(humd))
+          time.sleep(6)
+        # testing for low Humidity, run water pump without raise GPIO.
+        # input positive cable from AC to pilot lamp with symbol X1(pararel positive cable from AC to red and green pilot lamp)
+        # input negative cable from AC to relay COM port(attach negative cable from red and green pilot lamp differently with symbol X2)
+        # input positive cable from AC to positive water pump and negative cable put to relay NC(normally close) port, negative cable from 
+        # green pilot lamp put to relay NC port too, and negative cable from red pilot lamp put to relay NO(normally open) port
+        # when GPIO to LOW state relay should be on NC state and running water pump, but when GPIO goes HIGH
+        # relay on NO state and water pump goes off
+        # you can set_humidity value according your area
+        # this is for green house project purpose and some plants need moist condition
+        if humd < set_humidity:
+           GPIO.output(relay_2ch, GPIO.LOW) 
+        if humd > set_humidity:
+           GPIO.output(relay_2ch, GPIO.HIGH) 
+        # if you need for setting up with temperature only and run water pump or warehouse or basemand fan
+        # you just need to do this;
+        #if temp_c > set_temp:
+        #   GPIO.output(relay_2ch, GPIO,LOW)
+        #if temp_c < set_temp:
+        #   GPIO.output(relay_2ch, GPIO.HIGH)
+        # and how to make temperature and humidity if some condition needs both status??
+        # you just need to do this;
+        #if temp_c > set_temp:
+        #  GPIO.output(relay_2ch, GPIO.LOW)
+        #elif humidity < set_humidity:
+        #  GPIO.output(relay_2ch, GPIO.LOW)
+        #if temp_c < set_temp:
+        #  GPIO.output(relay_2ch, GPIO.HIGH)
+        #elif humidity > set_humidity:
+        #  GPIO.output(relay_2ch, GPIO.HIGH)
+        
+        else:
+          print ('Failed to get reading. Try again!')
+
+     except RuntimeError as error:
+        # Errors happen fairly often, DHT's are hard to read, just keep going
+          print(error.args[0])
+          time.sleep(2.0)
+          continue
+     except Exception as error:
+          dht.exit()
+          raise error
+
+just copy and paste this code to the file.py
+
+output should be like this 
+
+------------------------------------
+Moisture: 101 (10%)
+CO2: 22 ppm
+Light: 0 lux
+Temperature: 28.5 *C
+Humidity: 85.7% RH
+------------------------------------
+Moisture: 96 (9%)
+CO2: 1 ppm
+Light: 0 lux
+Temperature: 28.6 *C
+Humidity: 85.3% RH
+------------------------------------
+Moisture: 72 (7%)
+CO2: 81 ppm
+Light: 0 lux
+Temperature: 28.5 *C
+Humidity: 85.3% RH
+------------------------------------
+Moisture: 94 (9%)
+CO2: 4 ppm
+Light: 0 lux
+Temperature: 28.6 *C
+Humidity: 85.4% RH
+
+and output from file.csv
+
+  Date:         Time:       Temp:      Humidity:    Light:   Gas:      Moisture:
+09:12:2020     01:56:13     28.6*C      85.4%RH     0 Lux      100 ppm      0(0%)
+09:12:2020     01:56:25     28.5*C      85.3%RH     0 Lux      81 ppm      72(7%)
+09:12:2020     01:56:38     28.6*C      85.4%RH     0 Lux      4 ppm      94(9%)
+
